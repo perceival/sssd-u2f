@@ -1,0 +1,87 @@
+Install and enable this profile
+===============================
+
+1. Install prerequisites
+
+   * authselect
+   * pam-u2f  (module and pamu2fcfg utility)
+   * sssd     (if you use remote identity/auth providers)
+
+   On Fedora/RHEL:
+     sudo dnf install authselect pam-u2f pamu2fcfg sssd
+
+2. Copy profile files to authselect custom profiles directory
+
+     sudo mkdir -p /etc/authselect/custom/sssd-u2f
+     sudo cp -a . /etc/authselect/custom/sssd-u2f/
+
+3. Generate FIDO2 SSH key files
+
+   This profile uses sshformat, so keys are generated with ssh-keygen and
+   stored in ~/.ssh/. The same files work for both system auth and SSH.
+
+   Standard keys (PIN-capable, e.g. YubiKey 5C NFC, 5C Nano):
+
+     ssh-keygen -t ed25519-sk -O resident -O verify-required -f ~/.ssh/u2f_first
+     # touch key when prompted
+
+     ssh-keygen -t ed25519-sk -O resident -O verify-required -f ~/.ssh/u2f_second
+     # touch backup key when prompted
+
+   YubiKey Bio — early editions (fingerprint enforced by firmware, no PIN fallback):
+
+     ssh-keygen -t ed25519-sk -O resident -f ~/.ssh/u2f_bio
+     # touch key and provide fingerprint when prompted
+
+   YubiKey Bio — newer editions (supports PIN fallback):
+
+     ssh-keygen -t ed25519-sk -O resident -O verify-required -f ~/.ssh/u2f_bio
+     # Also update the bio line in system-auth to:
+     #   pam_u2f.so cue sshformat userverification=1 pinverification=0 authfile=.ssh/u2f_bio
+
+   Keep file permissions restrictive:
+
+     chmod 600 ~/.ssh/u2f_*
+
+4. Select the profile
+
+   Basic (U2F only):
+     sudo authselect select custom/sssd-u2f with-pam-u2f
+
+   With optional features (adjust to your system):
+     sudo authselect select custom/sssd-u2f with-pam-u2f with-sudo with-mdns4 with-mdns6
+
+   Capture your existing profile options to preserve them:
+     mapfile -t OPTS < <(authselect current | awk '/^- with-/ {gsub("^- ",""); print}')
+     sudo authselect select custom/sssd-u2f "${OPTS[@]}" with-pam-u2f
+
+5. Apply and verify
+
+     sudo authselect apply-changes
+     authselect current
+
+6. Test before logging out
+
+   Always test sudo and a new terminal login before closing your current
+   session. If something goes wrong, revert with:
+
+     sudo authselect select sssd --force
+
+Notes
+-----
+
+* The profile does not build pam_u2f from source. Install via your
+  package manager.
+
+* The routing logic in system-auth uses paired guard+key blocks (each guard
+  jumps exactly success=1 over its partner). Do not insert lines between a
+  guard and its pam_u2f.so partner, and do not change the {include if} tags
+  on one without changing the other.
+
+* If you add a new key, add a complete guard+key pair — one for the
+  touch-only (sudo) path and one for the PIN/bio (GDM) path.
+
+* Review system-auth and password-auth before enabling on any production host.
+  In particular, verify the list of login services in the guard lines matches
+  the GDM PAM files present on your system:
+    ls /etc/pam.d/gdm-*

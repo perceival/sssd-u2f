@@ -1,0 +1,88 @@
+auth        required                                     pam_env.so
+auth        required                                     pam_faildelay.so delay=2000000
+auth        required                                     pam_faillock.so preauth silent deny=4 unlock_time=1200 {include if "with-faillock"}
+auth        [success=done ignore=ignore default=die]     pam_sss.so require_cert_auth ignore_authinfo_unavail {include if "with-smartcard-required"}
+auth        sufficient                                   pam_fprintd.so {include if "with-fingerprint"}
+
+# ── Context-aware U2F routing ─────────────────────────────────────────────────
+#
+# Design: every key is controlled by a paired guard+key block.
+# The guard is a pam_succeed_if.so line with success=1 that jumps over exactly
+# one pam_u2f.so line — its partner. Both lines always carry the same
+# {include if "with-pam-u2f"} tag so they are rendered or stripped together.
+# The jump count of 1 is therefore always safe regardless of which other
+# optional lines are present or absent.
+#
+# Login services (gdm-password, gdm-fingerprint, login):
+#   → touch-only blocks are SKIPPED (guard fires on "service in ...", jumps over key)
+#   → PIN / biometric blocks are EVALUATED
+#
+# All other services (sudo, polkit, ssh-agent, etc.):
+#   → touch-only blocks are EVALUATED; success=done exits immediately
+#   → PIN / biometric blocks are SKIPPED (guard fires on "service notin ...", jumps over key)
+#
+# ── Touch-only path (sudo, polkit, ssh, screen unlock, etc.) ─────────────────
+# Guard fires when service IS a login manager → skips the key below.
+# For sudo/etc the guard result is "ignore" → key is tried normally.
+
+auth        [success=1 default=ignore]                   pam_succeed_if.so service in gdm-password:gdm-fingerprint:login quiet {include if "with-nopin4sudo"}
+auth        sufficient                                   pam_u2f.so cue sshformat pinverification=0 authfile=.ssh/u2f_first {include if "with-nopin4sudo"}
+
+auth        [success=1 default=ignore]                   pam_succeed_if.so service in gdm-password:gdm-fingerprint:login quiet {include if "with-nopin4sudo"}
+auth        sufficient                                   pam_u2f.so cue sshformat pinverification=0 authfile=.ssh/u2f_second {include if "with-nopin4sudo"}
+
+# Bio key touch-only: fingerprint is enforced internally by key firmware.
+# For sudo this is equivalent to a strong presence check (fingerprint match).
+auth        [success=1 default=ignore]                   pam_succeed_if.so service in gdm-password:gdm-fingerprint:login quiet {include if "with-nopin4sudo"}
+auth        sufficient                                   pam_u2f.so cue sshformat authfile=.ssh/u2f_bio {include if "with-nopin4sudo"}
+
+# ── PIN-required / biometric path (GDM / graphical login) ────────────────────
+# Guard fires when service is NOT a login manager → skips the key below.
+# For GDM/login the guard result is "ignore" → key is tried normally.
+
+# Bio key for graphical login: firmware enforces fingerprint match (early Bio
+# editions enforce this unconditionally; no pam-u2f flags required).
+# For newer YubiKey Bio editions that support PIN fallback, replace this line with:
+#   pam_u2f.so cue sshformat userverification=1 pinverification=0 authfile=.ssh/u2f_bio
+auth        [success=1 default=ignore]                   pam_succeed_if.so service notin gdm-password:gdm-fingerprint:login quiet {include if "with-pam-u2f"}
+auth        sufficient                                   pam_u2f.so cue sshformat authfile=.ssh/u2f_bio {include if "with-pam-u2f"}
+
+auth        [success=1 default=ignore]                   pam_succeed_if.so service notin gdm-password:gdm-fingerprint:login quiet {include if "with-pam-u2f"}
+auth        sufficient                                   pam_u2f.so cue sshformat pinverification=1 authfile=.ssh/u2f_first {include if "with-pam-u2f"}
+
+auth        [success=1 default=ignore]                   pam_succeed_if.so service notin gdm-password:gdm-fingerprint:login quiet {include if "with-pam-u2f"}
+auth        sufficient                                   pam_u2f.so cue sshformat pinverification=1 authfile=.ssh/u2f_second {include if "with-pam-u2f"}
+
+# ── Standard fallback authentication ─────────────────────────────────────────
+auth        sufficient                                   libpam_rssh.so {include if "with-rssh-agent"}
+auth        [default=1 ignore=ignore success=ok]         pam_succeed_if.so uid >= 1000 quiet
+auth        [default=1 ignore=ignore success=ok]         pam_localuser.so {exclude if "with-smartcard"}
+auth        [default=2 ignore=ignore success=ok]         pam_localuser.so {include if "with-smartcard"}
+auth        [success=done authinfo_unavail=ignore ignore=ignore default=die] pam_sss.so try_cert_auth {include if "with-smartcard"}
+auth        sufficient                                   pam_unix.so {if not "without-nullok":nullok} try_first_pass
+auth        requisite                                    pam_succeed_if.so uid >= 1000 quiet_success
+auth        sufficient                                   pam_sss.so forward_pass
+auth        required                                     pam_faillock.so authfail deny=4 unlock_time=1200 {include if "with-faillock"}
+auth        required                                     pam_deny.so
+
+account     required                                     pam_access.so {include if "with-pamaccess"}
+account     required                                     pam_faillock.so {include if "with-faillock"}
+account     required                                     pam_unix.so
+account     sufficient                                   pam_localuser.so
+account     sufficient                                   pam_succeed_if.so uid < 1000 quiet
+account     [default=bad success=ok user_unknown=ignore] pam_sss.so
+account     required                                     pam_permit.so
+
+password    requisite                                    pam_pwquality.so try_first_pass local_users_only
+password    sufficient                                   pam_unix.so sha512 shadow {if not "without-nullok":nullok} try_first_pass use_authtok
+password    sufficient                                   pam_sss.so use_authtok
+password    required                                     pam_deny.so
+
+session     optional                                     pam_keyinit.so revoke
+session     required                                     pam_limits.so
+session     optional                                     pam_ecryptfs.so unwrap {include if "with-ecryptfs"}
+-session    optional                                     pam_systemd.so
+session     optional                                     pam_oddjob_mkhomedir.so umask=0077 {include if "with-mkhomedir"}
+session     [success=1 default=ignore]                   pam_succeed_if.so service in crond quiet use_uid
+session     required                                     pam_unix.so
+session     optional                                     pam_sss.so

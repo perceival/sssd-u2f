@@ -1,0 +1,102 @@
+# sssd-u2f (Custom Authselect Profile)
+
+This is a custom **authselect** profile based on `sssd` that provides a
+"Context-Aware" U2F authentication flow. It balances strong security for
+graphical login with frictionless convenience for administrative tasks.
+
+Tested with: Fedora 44 and YubiKey Bio - FIDO Edition (early edition), YubiKey 5C NFC,
+YubiKey 5C Nano. YubiKey 4 is not supported (no FIDO2).
+
+The FIDO2 key files are shared with the SSH client — the same `~/.ssh/u2f_*`
+files are used for both system login/sudo and SSH authentication.
+
+---
+
+## Key Features
+
+Unlike the standard Fedora/RHEL U2F setup, this profile uses **paired
+guard blocks** in the PAM stack to route each authentication attempt to the
+appropriate security level based on the calling service — without fragile
+numeric jump counts that break when optional lines are conditionally absent.
+
+### Text Console, GDM & Graphical Login (Strict Mode)
+
+- Standard keys: **PIN required** (`pinverification=1`)
+- YubiKey Bio: **fingerprint match** enforced by key firmware
+- A stolen key without PIN or enrolled fingerprint cannot unlock your desktop
+
+### Sudo & Terminal Elevation (Easy Mode)
+
+- All keys: **touch only** (`pinverification=0`)
+- YubiKey Bio: touch triggers an internal fingerprint check by the key firmware
+- Run `sudo`, key blinks, touch it (optionally with fingerprint), done
+
+---
+
+## How It Works
+
+### Behaviour by service
+
+| Service context      | Standard keys    | YubiKey Bio           |
+| :------------------- | :--------------- | :-------------------- |
+| GDM / graphical login | Key + PIN        | Key + fingerprint     |
+| sudo / polkit / ssh  | Key touch only   | Key + fingerprint     |
+
+### The paired-guard pattern
+
+The old approach used a single `pam_succeed_if` line with a numeric jump
+(e.g. `success=4`) to skip over a block of U2F lines. This is fragile:
+authselect's `{include if "..."}` conditionals can remove lines at render
+time, making the jump count wrong and causing authentication to overshoot
+into the wrong section — which is what prevented the DE from loading.
+
+The new approach wraps each key in a **self-contained guard+key pair**:
+
+```
+auth [success=1 default=ignore] pam_succeed_if.so service in <login-svcs> quiet {include if "with-pam-u2f"}
+auth sufficient                 pam_u2f.so ... authfile=.ssh/u2f_first         {include if "with-pam-u2f"}
+```
+
+- The guard and its key line always carry **identical `{include if}` tags**,
+  so they are rendered or stripped as a matched pair — never orphaned.
+- The jump is always `success=1`, skipping exactly one line: its partner.
+- No jump ever crosses a conditional boundary.
+
+Touch-only blocks use `service in <login-services>` — the guard fires for
+GDM/login and skips the key; sudo/etc fall through to the key normally.
+
+PIN/bio blocks use `service notin <login-services>` — the guard fires for
+sudo/etc and skips the key; GDM/login fall through to the key normally.
+
+---
+
+## Key File Convention
+
+Keys are stored as FIDO2 SSH keys in `~/.ssh/` using `sshformat`:
+
+| File               | Key type                  | Notes                              |
+| :----------------- | :------------------------ | :--------------------------------- |
+| `~/.ssh/u2f_first` | Primary key (PIN capable) | e.g. YubiKey 5C NFC, 5C Nano      |
+| `~/.ssh/u2f_second`| Backup key (PIN capable)  | Same type, kept offsite            |
+| `~/.ssh/u2f_bio`   | YubiKey Bio               | Fingerprint enforced by firmware   |
+
+For keys without PIN support (older models), a separate file can be added
+following the same paired-guard pattern with `pinverification=0`.
+
+---
+
+## Profile Structure
+
+- **`system-auth`**: Primary PAM template. Contains the context-aware U2F
+  routing logic for login vs. sudo/polkit/ssh.
+- **`password-auth`**: Used for non-interactive password changes and some
+  lock screen implementations. Contains PIN-required U2F without routing
+  logic (all contexts treated as strict).
+- **`nsswitch.conf`**: Name service switch configuration (symlinked from sssd
+  base profile unless customised).
+
+---
+
+## Installation & Setup
+
+See the `INSTALL` file for step-by-step instructions.
