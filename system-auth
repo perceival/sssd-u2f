@@ -54,7 +54,7 @@ auth        [success=1 default=ignore]                   pam_succeed_if.so servi
 auth        sufficient                                   pam_u2f.so cue sshformat pinverification=1 authfile=.ssh/u2f_second {include if "with-pam-u2f"}
 
 # ── Standard fallback authentication ─────────────────────────────────────────
-auth        sufficient                                   libpam_rssh.so {include if "with-rssh-agent"}
+auth        sufficient                                   pam_rssh.so {include if "with-rssh-agent"}
 auth        [default=1 ignore=ignore success=ok]         pam_succeed_if.so uid >= 1000 quiet
 auth        [default=1 ignore=ignore success=ok]         pam_localuser.so {exclude if "with-smartcard"}
 auth        [default=2 ignore=ignore success=ok]         pam_localuser.so {include if "with-smartcard"}
