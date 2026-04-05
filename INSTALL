@@ -6,14 +6,24 @@ Install and enable this profile
    * authselect
    * pam-u2f  (module and pamu2fcfg utility)
    * sssd     (if you use remote identity/auth providers)
+   for pam_rssh.so:
+   * pam-devel
+   * openssl-devel
+   * rust
+   * cargo
 
    On Fedora/RHEL:
-     sudo dnf install authselect pam-u2f pamu2fcfg sssd
+     sudo dnf -y install authselect pam-u2f pamu2fcfg sssd
+     sudo dnf -y install pam-devel openssl-devel rust cargo
 
 2. Copy profile files to authselect custom profiles directory
 
      sudo mkdir -p /etc/authselect/custom/sssd-u2f
      sudo cp -a . /etc/authselect/custom/sssd-u2f/
+     git clone --recurse-submodule https://github.com/z4yx/pam_rssh.git
+     cargo fix --lib -p pam_rrsh
+     cargo build --release
+     sudo cp target/release/libpam_rssh.so /usr/lib64/security/pam_rssh.so
 
 3. Generate FIDO2 SSH key files
 
@@ -52,7 +62,7 @@ Install and enable this profile
      sudo authselect select custom/sssd-u2f with-pam-u2f with-nopin4sudo
 
    With optional features (adjust to your system):
-     sudo authselect select custom/sssd-u2f with-pam-u2f with-sudo with-mdns4 with-mdns6
+     sudo authselect select custom/sssd-u2f with-fingerprint with-pam-u2f with-sudo with-rssh-agent with-mdns4 with-mdns6
 
    Capture your existing profile options to preserve them:
      mapfile -t OPTS < <(authselect current | awk '/^- with-/ {gsub("^- ",""); print}')
