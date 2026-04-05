@@ -25,11 +25,11 @@ numeric jump counts that break when optional lines are conditionally absent.
 - YubiKey Bio: **fingerprint match** enforced by key firmware
 - A stolen key without PIN or enrolled fingerprint cannot unlock your desktop
 
-### Sudo & Terminal Elevation (Easy Mode)
+### Sudo & Terminal Elevation
 
-- All keys: **touch only** (`pinverification=0`)
+- Default (`with-pam-u2f` only): **PIN required** (same as graphical login)
+- Optional (`with-pam-u2f` + `with-nopin4sudo`): **touch only** (`pinverification=0`) for sudo/polkit/ssh
 - YubiKey Bio: touch triggers an internal fingerprint check by the key firmware
-- Run `sudo`, key blinks, touch it (optionally with fingerprint), done
 
 ---
 
@@ -40,7 +40,7 @@ numeric jump counts that break when optional lines are conditionally absent.
 | Service context      | Standard keys    | YubiKey Bio           |
 | :------------------- | :--------------- | :-------------------- |
 | GDM / graphical login | Key + PIN        | Key + fingerprint     |
-| sudo / polkit / ssh  | Key touch only   | Key + fingerprint     |
+| sudo / polkit / ssh  | Key + PIN (default) or touch-only with `with-nopin4sudo` | Key + fingerprint |
 
 ### The paired-guard pattern
 
@@ -62,11 +62,13 @@ auth sufficient                 pam_u2f.so ... authfile=.ssh/u2f_first         {
 - The jump is always `success=1`, skipping exactly one line: its partner.
 - No jump ever crosses a conditional boundary.
 
-Touch-only blocks use `service in <login-services>` — the guard fires for
-GDM/login and skips the key; sudo/etc fall through to the key normally.
+Touch-only blocks use `service in <login-services>` and are enabled only with
+`with-nopin4sudo` — the guard fires for GDM/login and skips the key; sudo/etc
+fall through to the key normally.
 
-PIN/bio blocks use `service notin <login-services>` — the guard fires for
-sudo/etc and skips the key; GDM/login fall through to the key normally.
+PIN/bio blocks use `service notin <login-services>` and are enabled with
+`with-pam-u2f` — the guard fires for sudo/etc and skips the key only when a
+touch-only override is active; GDM/login fall through to the key normally.
 
 ---
 

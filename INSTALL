@@ -45,8 +45,11 @@ Install and enable this profile
 
 4. Select the profile
 
-   Basic (U2F only):
+   Basic (U2F only, PIN required for both login and sudo):
      sudo authselect select custom/sssd-u2f with-pam-u2f
+
+   U2F with touch-only sudo (PIN still required for login):
+     sudo authselect select custom/sssd-u2f with-pam-u2f with-nopin4sudo
 
    With optional features (adjust to your system):
      sudo authselect select custom/sssd-u2f with-pam-u2f with-sudo with-mdns4 with-mdns6
@@ -75,8 +78,11 @@ Notes
 
 * The routing logic in system-auth uses paired guard+key blocks (each guard
   jumps exactly success=1 over its partner). Do not insert lines between a
-  guard and its pam_u2f.so partner, and do not change the {include if} tags
-  on one without changing the other.
+  guard and its pam_u2f.so partner, and do not change the include tags on one
+  without changing the other.
+
+* `with-pam-u2f` enables the PIN/biometric path. `with-nopin4sudo` is an
+  optional override that enables touch-only behavior for sudo/polkit/ssh.
 
 * If you add a new key, add a complete guard+key pair — one for the
   touch-only (sudo) path and one for the PIN/bio (GDM) path.
