@@ -125,3 +125,73 @@ Notes
   In particular, verify the list of login services in the guard lines matches
   the GDM PAM files present on your system:
     ls /etc/pam.d/gdm-*
+
+Troubleshooting
+===============
+
+Sudo still asks for password despite all the above
+--------------------------------------------------
+
+If ``sudo whoami`` keeps prompting for a password instead of asking the
+YubiKey to touch, the most likely cause is that the SSH agent is not
+actually being forwarded into the session. ``pam_rssh`` then has nothing
+to query. Two real-world traps that surface as identical symptoms:
+
+1. **SSH client points at the wrong agent socket.**
+
+   On Fedora the system-wide ``/etc/ssh/ssh_config.d/50-redhat.conf``
+   typically sets ``IdentityAgent /run/user/<uid>/ssh-agent.socket``,
+   which is a *different* socket from the one used by ``gnome-keyring``
+   (``/run/user/<uid>/gcr/ssh``). Your shell's ``ssh-add -l`` shows your
+   keys via ``$SSH_AUTH_SOCK``, but ``ssh`` itself will silently use the
+   ``IdentityAgent`` socket — and that one is empty. ``ssh -A`` then
+   forwards the empty agent.
+
+   Diagnose::
+
+     echo "$SSH_AUTH_SOCK"
+     ssh-add -l                     # works in your shell
+     ssh -G <host> | grep -i agent  # different socket?
+
+   Fix in ``~/.ssh/config`` for the affected host (or under ``Host *``)::
+
+     Host <host>
+         IdentityAgent SSH_AUTH_SOCK
+
+   The literal string ``SSH_AUTH_SOCK`` is a special token that tells
+   ``ssh`` to use the environment variable instead of a fixed path.
+
+2. **Stale ControlMaster multiplex.**
+
+   If your ``~/.ssh/config`` enables ``ControlMaster auto`` (common under
+   ``Host *``) and you connected once *without* ``-A``, every subsequent
+   ``ssh -A <host>`` will silently join the existing master and inherit
+   its (no-forwarding) state. ``ssh -O exit <host>`` does not always
+   clean this up.
+
+   Force a fresh connection::
+
+     rm -f ~/.ssh/S.<user>@<host>:<port>
+     ssh -A <host>
+
+   Or bypass multiplex for one connection::
+
+     ssh -A -o ControlPath=none <host>
+
+   Adding ``ForwardAgent yes`` to the ``Host`` block in ``~/.ssh/config``
+   makes future logins forward by default, so you don't depend on
+   remembering ``-A``.
+
+Verifying the chain end-to-end
+------------------------------
+
+After ``ssh -A <host>``, on the remote host::
+
+  ssh-add -l                              # must list your keys
+  sudo printenv SSH_AUTH_SOCK             # must print a path
+  sudo -k && sudo whoami                  # YubiKey should blink
+
+If ``ssh-add -l`` fails with "communication with agent failed", the
+forwarded socket exists but the upstream agent is unreachable — that's
+trap #1 above. If ``sudo printenv SSH_AUTH_SOCK`` is empty, ``sudoers
+env_keep`` is missing — see step 3a above.
