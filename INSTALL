@@ -1,6 +1,17 @@
 Install and enable this profile
 ===============================
 
+
+Quick path
+==========
+
+A self-contained installer is provided as ``install.sh``: it installs build
+deps, builds and installs ``pam_rssh.so``, copies the profile to authselect,
+and configures the sudoers env_keep entry needed for SSH agent forwarding.
+
+    bash install.sh
+
+The script is annotated below — read on for the manual step-by-step.
 1. Install prerequisites
 
    * authselect
@@ -52,6 +63,19 @@ Install and enable this profile
    Keep file permissions restrictive:
 
      chmod 600 ~/.ssh/u2f_*
+
+3a. Configure sudoers env_keep for SSH agent forwarding
+
+   ``pam_rssh`` validates ``SUDO`` by signing a challenge with a key from
+   the forwarded SSH agent. Sudo strips most environment variables by
+   default; it must preserve ``SSH_AUTH_SOCK``:
+
+     echo 'Defaults env_keep += "SSH_AUTH_SOCK"' | sudo tee /etc/sudoers.d/10-rssh-agent
+     sudo chmod 0440 /etc/sudoers.d/10-rssh-agent
+     sudo visudo -cf /etc/sudoers.d/10-rssh-agent
+
+   Without this step, ``sudo`` will fall through pam_rssh.so and prompt for
+   a password instead of asking the YubiKey to touch.
 
 4. Select the profile
 
